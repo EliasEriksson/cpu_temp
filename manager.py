@@ -6,7 +6,7 @@ from db import Client, Temp, tables
 
 
 class Manager:
-    def __init__(self, engine_adress="sqlite:///db.db", ):
+    def __init__(self, engine_adress="sqlite:///db.db"):
         self.engine = create_engine(engine_adress)
         for table in tables:
             table.create(self.engine)
