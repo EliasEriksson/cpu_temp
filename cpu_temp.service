@@ -1,0 +1,8 @@
+[Unit]
+Description=Logs cpu temperatures over time
+
+[Service]
+ExecStart=/path/to/python /path/to/cpu_temp.py --log --schedule --job_type interval --seconds 30
+
+[Install]
+WantedBy=multi-user.target
