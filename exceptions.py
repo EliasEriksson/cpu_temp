@@ -9,3 +9,11 @@ class ArgumentError(_Base):
 
 class NothingToDo(_Base):
     pass
+
+
+class CPULoggingNotSupported(_Base):
+    pass
+
+
+class NoScript(_Base):
+    pass
