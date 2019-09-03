@@ -10,6 +10,8 @@ import exceptions
 import argparse
 import subprocess
 import re
+from db import Client, Processor
+from matplotlib import pyplot as plt
 
 
 PROJECT_ROOT = Path(__file__).absolute().parent
@@ -222,7 +224,88 @@ def schedule(parsed_args: Union[argparse.Namespace, Dict[str, int]]):
 
 
 def view(args: Union[argparse.Namespace, Dict[str, int]]):
-    pass
+    with Manager(DATABASE_ADRESS) as cursor:
+        client = cursor.get_client(gethostname())
+        processors: List[Processor] = cursor.session.query(Processor).all()
+    temperature = {}
+    usage = {}
+    for processor in processors:
+        if processor.processor not in temperature:
+            temperature[processor] = [[processor.time], [processor.temperature]]
+        else:
+            temperature[processor].append([[processor.time], [processor.temperature]])
+
+        if processor.processor not in usage:
+            usage[processor] = [[processor.time], [processor.processor_usage]]
+        else:
+            usage[processor].append([[processor.time], [processor.processor_usage]])
+
+
+def plot(measurment: str, core=False, start_time: datetime = None, end_time: datetime = None):
+    """
+    plots the prefered 'measurement' over time
+
+    'measurement' can take the values 'temperature' or 'usage' and will plot the measurement over time.
+
+    If 'core' is False on a multithreaded system there will be one line per virtual processor.
+    If 'core' is True on a multithreaded system the data from each virtual processor on that core will be avaraged
+    to show one line per core.
+    The value of 'core' wont matter on non multithreaded systems.
+
+    If a value is given to 'start_time' only data availeble from that time will be used in the graph.
+    If no value is given there will be no under limit on the data used in the graph.
+
+    If a value is given to 'end_time' only data availeble up untill that time will be used in the graph
+    If not value not given there will be no upper limit on the data used in the graph.
+
+    :param measurment: str, takes value 'usage' or 'temperature'
+    :param core: bool, mutithreaded systems are avaraged if True
+    :param start_time: datetime, specific date to start showing data
+    :param end_time: datetime, specific date to stop showing date
+    :return:
+    """
+
+    if not start_time:
+        start_time = 0
+    if not end_time:
+        end_time = datetime.now()
+
+    with Manager(DATABASE_ADRESS) as cursor:
+        client: Client = cursor.get_client(gethostname())
+        processors: List[Processor] = cursor.session.query(Processor).filter(
+            start_time < Processor.time, Processor.time < end_time, client == Processor.client
+        ).all()
+
+    data = {}
+    if not core:
+        for processor in processors:
+            if processor.processor not in data:
+                data[processor.processor] = [
+                    [processor.time], [getattr(processor, measurment)], f"Processor {processor.processor}"]
+            else:
+                data[processor.processor][0].append(processor.time)
+                data[processor.processor][1].append(getattr(processor, measurment))
+    else:
+        for processor in processors:
+            if processor.core not in data:
+                data[processor.core] = [
+                    [processor.time], [getattr(processor, measurment)], f"Core {processor.core}"]
+            else:
+                if data[processor.core][0][-1] == processor.time:
+                    data[processor.core][1][-1] = (data[processor.core][1][-1] + getattr(processor, measurment)) / 2
+                else:
+                    data[processor.core][0].append(processor.time)
+                    data[processor.core][1].append(getattr(processor, measurment))
+
+    fig = plt.figure()
+
+    ax = fig.add_subplot(111, ylabel=measurment, xlabel="Time", title=f"{measurment.capitalize()} over Time.")
+
+    for processor in data:
+        plt.plot(data[processor][0], data[processor][1], label=data[processor][2])
+
+    plt.legend()
+    plt.show()
 
 
 def handle():
@@ -278,4 +361,3 @@ def handle():
 
 if __name__ == '__main__':
     handle()
-
