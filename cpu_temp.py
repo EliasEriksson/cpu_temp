@@ -14,6 +14,10 @@ from db import Client, Processor
 from matplotlib import pyplot as plt
 
 
+# TODO solve issue with gathering cpu_usage stats as they are ps command is wonky
+# TODO add functionality to draw heavy usage stats from db to a table within given timeframe
+
+
 PROJECT_ROOT = Path(__file__).absolute().parent
 DATABASE_ADRESS = f'sqlite:////{str(PROJECT_ROOT.joinpath("db.db"))}'
 
@@ -83,7 +87,6 @@ def get_processes() -> Dict[int, dict]:
             processes[processor_id]["process_usage"] = usage
             processes[processor_id]["command"] = command
             processes[processor_id]["processor_usage"] += usage
-
     return processes
 
 
@@ -119,7 +122,7 @@ def get_cpu_map() -> dict:
     return cpu_map
 
 
-def get_session_time() -> timedelta:
+def get_session_time() -> Tuple[datetime, datetime]:
     """
     looks up the duration of the current session
 
@@ -130,7 +133,7 @@ def get_session_time() -> timedelta:
     session_string = ' '.join([b for b in out[0].split(" ") if b][3:7])
     now = datetime.now()
     session_start = datetime.strptime(f"{now.year} {session_string}", "%Y %a %b %d %H:%M")
-    return now - session_start
+    return session_start, now
 
 
 def get_temp(need_sleep: bool) -> dict:
@@ -191,6 +194,27 @@ def store_temp(need_sleep: bool = False):
             manager.add_cpu(client, core, cpu, cpu_usage, process, process_usage, temperature, time)
 
 
+def try_timestamp(timestamp: str, formating: str) -> Union[datetime, None]:
+    try:
+        return datetime.strptime(timestamp, formating)
+    except ValueError:
+        return None
+
+
+def get_time_from_user(timestamp: str) -> datetime:
+    formats = ["%y/%m/%d-%H:%M:%S",
+               "%y/%m/%d-%H:%M",
+               "%y/%m/%d-%H",
+               "%y/%m/%d"]
+    for formatting in formats:
+        result = try_timestamp(timestamp, formatting)
+        if result:
+            return result
+    raise exceptions.BadFormatting(f"Time format must follow one of the following: {' '.join(formats)}\n"
+                                   f"Formatting explained here: "
+                                   f"https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior")
+
+
 def schedule(parsed_args: Union[argparse.Namespace, Dict[str, int]]):
     """
     schedules the application to automaticly collect data
@@ -224,24 +248,19 @@ def schedule(parsed_args: Union[argparse.Namespace, Dict[str, int]]):
 
 
 def view(args: Union[argparse.Namespace, Dict[str, int]]):
-    with Manager(DATABASE_ADRESS) as cursor:
-        client = cursor.get_client(gethostname())
-        processors: List[Processor] = cursor.session.query(Processor).all()
-    temperature = {}
-    usage = {}
-    for processor in processors:
-        if processor.processor not in temperature:
-            temperature[processor] = [[processor.time], [processor.temperature]]
-        else:
-            temperature[processor].append([[processor.time], [processor.temperature]])
+    host = args.host if args.host else gethostname()
+    core = args.core if args.core else False
+    if args.this_session:
+        start_time, end_time = get_session_time()
+    else:
+        start_time = get_time_from_user(args.start_time)
+        end_time = get_time_from_user(args.end_time)
 
-        if processor.processor not in usage:
-            usage[processor] = [[processor.time], [processor.processor_usage]]
-        else:
-            usage[processor].append([[processor.time], [processor.processor_usage]])
+    measurement = args.measurement
+    plot(host, measurement, core, start_time, end_time)
 
 
-def plot(measurment: str, core=False, start_time: datetime = None, end_time: datetime = None):
+def plot(host: str, measurment: str, core=False, start_time: datetime = None, end_time: datetime = None):
     """
     plots the prefered 'measurement' over time
 
@@ -258,6 +277,7 @@ def plot(measurment: str, core=False, start_time: datetime = None, end_time: dat
     If a value is given to 'end_time' only data availeble up untill that time will be used in the graph
     If not value not given there will be no upper limit on the data used in the graph.
 
+    :param host: str, the hostname to plot
     :param measurment: str, takes value 'usage' or 'temperature'
     :param core: bool, mutithreaded systems are avaraged if True
     :param start_time: datetime, specific date to start showing data
@@ -271,7 +291,7 @@ def plot(measurment: str, core=False, start_time: datetime = None, end_time: dat
         end_time = datetime.now()
 
     with Manager(DATABASE_ADRESS) as cursor:
-        client: Client = cursor.get_client(gethostname())
+        client: Client = cursor.get_client(host)
         processors: List[Processor] = cursor.session.query(Processor).filter(
             start_time < Processor.time, Processor.time < end_time, client == Processor.client
         ).all()
@@ -335,13 +355,11 @@ def handle():
                                                     "how long in seconds is it allow to execute past set time.")
     parser.add_argument("--view", action="store_true")
     parser.add_argument("--host", type=str, help="The hostname of the client to draw data about.")
-    parser.add_argument("--start_date", type=str, help="Date to start draw data from.")
-    parser.add_argument("--end_date", type=str, help="Date to end draw data from.")
+    parser.add_argument("--measurement", type=str, help="temperature or cpu_usage")
     parser.add_argument("--this_session", action="store_true")
-    parser.add_argument("--min_cpu", type=float, help="Minimum required CPU processor processor_usage for drawn data.")
-    parser.add_argument("--max_cpu", type=float, help="Maximum limit for CPU processor processor_usage for drawn data.")
-    parser.add_argument("--min_temp", type=float, help="Minimum temperature in celsius to use as datapoints.")
-    parser.add_argument("--max_temp", type=float, help="Maximum temperature in celcius to use as datapoints.")
+    parser.add_argument("--start_time", type=str, help="Date to start draw data from.")
+    parser.add_argument("--end_time", type=str, help="Date to end draw data from.")
+    parser.add_argument("--core", action="store_true")
 
     args = parser.parse_args()
     if args.log or args.schedule or args.view:
@@ -356,7 +374,7 @@ def handle():
                 raise exceptions.ArgumentError("Can not handle both --view and --schedule at the same time.")
             view(args)
     else:
-        raise exceptions.NothingToDo("Need to add '--log' '--view' or '--schedule' to args")
+        raise exceptions.NothingToDo("Need to add '--log', '--view' or '--schedule' to args")
 
 
 if __name__ == '__main__':

@@ -17,3 +17,7 @@ class CPULoggingNotSupported(_Base):
 
 class NoScript(_Base):
     pass
+
+
+class BadFormatting(_Base):
+    pass
