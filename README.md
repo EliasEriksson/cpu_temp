@@ -1,4 +1,4 @@
-# cpu_temp
+# system_monitor_tool
 Logs your systems cpu temperature.
 
 ## Install dependencies
