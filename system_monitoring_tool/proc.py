@@ -44,6 +44,22 @@ def parse_proc_stat(stat: str) -> List[int]:
             if re.search(r"^cpu\d", line)]
 
 
+def new_parse_proc_stat(stat: str) -> List[Tuple[int, int]]:
+    """
+
+    :param stat:
+    :return: list of each processors total jiffies and used jiffies
+    """
+    lst = []
+    for line in stat.split("\n"):
+        if re.search(r"^cpu\d", line):
+            jiffies = [int(x) for x in line.strip().split(" ")[1:]]
+            total_jiffies = sum(jiffies)
+            used_jiffies = total_jiffies - sum(itemgetter(2, 3)(jiffies))
+            lst.append((total_jiffies, used_jiffies))
+    return lst
+
+
 def read_proc_pids_stat() -> List[str]:
     """
     reads all pid folders in /proc
@@ -67,10 +83,10 @@ def parse_proc_pids_stat(pids: List[str]) -> List[Tuple[int]]:
     :param pids: List[str], content from 'read_proc_pids_stat()'
     :return: List[Tuple[int]], list of process id, processor id, utime, stime
     """
-    return [tuple(int(_) for _ in itemgetter(0, 38, 13, 14)(process.split(" "))) for process in pids]
+    return [tuple(int(s) for s in itemgetter(0, 38, 13, 14)(process.split(" "))) for process in pids]
 
 
-def get_cpu_usage(time: float = 1) -> List[Tuple[int, float, str]]:
+def get_cpu_usage(time: float = 1) -> Tuple[List[float], List[Tuple[int, float, str]]]:
     """
     calculates the cpu usage of each process on the system
 
@@ -93,23 +109,25 @@ def get_cpu_usage(time: float = 1) -> List[Tuple[int, float, str]]:
     pid_stats_t1 = read_proc_pids_stat()
 
     cpu_clock_ticks = [
-        current - init
-        for init, current
-        in zip(parse_proc_stat(cpu_stats_t0), parse_proc_stat(cpu_time_t1))]
+        (tot_c - tot_i, used_c - used_i)
+        for (tot_i, used_i), (tot_c, used_c)
+        in zip(new_parse_proc_stat(cpu_stats_t0), new_parse_proc_stat(cpu_time_t1))]
 
     process_clock_ticks_used = [
         (pid, p_t1, u_t1 - u_t0, s_t1 - s_t0)
         for (_, p_t0, u_t0, s_t0), (pid, p_t1, u_t1, s_t1)
-        in zip(parse_proc_pids_stat(pid_stats_t0), parse_proc_pids_stat(pid_stats_t1))]
+        in zip(parse_proc_pids_stat(pid_stats_t0), parse_proc_pids_stat(pid_stats_t1))
+        if pid == _]
 
-    usage = [(processor, ((utime + stime) / cpu_clock_ticks[processor]) * 100, read_proc_pid_cmdline(pid))
-             for pid, processor, utime, stime
-             in process_clock_ticks_used]
+    processor_usage = [used / total * 100 for total, used in cpu_clock_ticks]
 
-    return usage
+    process_usage = [
+        (processor, ((utime + stime) / cpu_clock_ticks[processor][0]) * 100, read_proc_pid_cmdline(pid))
+        for pid, processor, utime, stime
+        in process_clock_ticks_used]
+
+    return processor_usage, process_usage
 
 
 if __name__ == '__main__':
-    for processor_, usage_, command_ in get_cpu_usage():
-        print(type(command_))
-        # print(f"processor {processor_} using {usage_}, command '{command_}'")
+    get_cpu_usage(3)

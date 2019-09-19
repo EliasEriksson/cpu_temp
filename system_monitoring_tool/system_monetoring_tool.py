@@ -13,7 +13,6 @@ from system_monitoring_tool.db import Client, Processor
 from matplotlib import pyplot as plt
 from .proc import get_cpu_usage
 from . import DATABASE_ADRESS
-from functools import partial
 
 
 # TODO solve issue with gathering cpu_usage stats as they are ps command is wonky
@@ -33,7 +32,7 @@ def read_file(path: Path) -> str:
         return file.readline().strip()
 
 
-def get_processes(t: float) -> Dict[int, dict]:
+def get_processes(t: float) -> Dict[int, Tuple[float, float, str]]:
     """
     finds the heaviest processes in the system for each processor
 
@@ -44,19 +43,13 @@ def get_processes(t: float) -> Dict[int, dict]:
     :return: dict(processor_id: int) -> dict
     """
 
-    processes_table = get_cpu_usage(t)
-    # processes_table = [parse_ps(row, regex) for row in process.stdout.split("\n") if row]
+    processor_usage, processes_table = get_cpu_usage(t)
     processes_table.sort(key=lambda p: p[1])
 
-    processes = {}
-    for processor_id, usage, command in processes_table:
-        if processor_id not in processes:
-            processes.update({processor_id: {"process_usage": usage, "command": command, "processor_usage": usage}})
-        else:
-            processes[processor_id]["process_usage"] = usage
-            processes[processor_id]["command"] = command
-            processes[processor_id]["processor_usage"] += usage
-    return processes
+    processors = {processor_id: (processor_usage[processor_id], process_usage, command)
+                  for processor_id, process_usage, command in processes_table}
+
+    return processors
 
 
 def get_cpu_map() -> dict:
@@ -156,8 +149,8 @@ def store_temp(t: float = 1, need_sleep: bool = False):
     time = datetime.now()
     processes = get_processes(t)
     temperatures = get_temp(need_sleep)
-    stats = [(core_map[cpu], cpu, processes[cpu]["processor_usage"], processes[cpu]["command"],
-              processes[cpu]["process_usage"], temperatures[core_map[cpu]])
+    stats = [(core_map[cpu], cpu, processes[cpu][0], processes[cpu][2],
+              processes[cpu][1], temperatures[core_map[cpu]])
              for cpu in core_map.keys()]
 
     with Manager(DATABASE_ADRESS) as manager:
@@ -355,7 +348,3 @@ def handle():
             view(args)
     else:
         raise exceptions.NothingToDo("Need to add '--log', '--view' or '--schedule' to args")
-
-
-def test():
-    store_temp(0, False)
